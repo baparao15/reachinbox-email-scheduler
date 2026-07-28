@@ -14,10 +14,9 @@ async function main() {
   await runMigrations();
 
   const app = createApp();
-  const server = app.listen(env.PORT, () => {
-    logger.info({ port: env.PORT, env: env.NODE_ENV }, 'API listening');
+  const server = app.listen(env.PORT, "0.0.0.0", () => {
+    logger.info({ port: env.PORT, env: env.NODE_ENV }, "API listening");
   });
-
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
