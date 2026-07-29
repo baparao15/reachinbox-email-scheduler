@@ -122,6 +122,7 @@ npm run install:all && npm run infra:up && npm run setup
 | `REDIS_URL` | — | Redis connection string |
 | `QUEUE_NAME` | `email-send` | BullMQ queue name |
 | `RUN_WORKER_IN_PROCESS` | `false` | Co-host the worker in the API process (single-container deploys) |
+| `SEED_ON_BOOT` | `false` | Provision Ethereal senders on boot if none exist. Required on deploys that never run `npm run seed` |
 | `GOOGLE_CLIENT_ID` | — | Verifies Google ID tokens; must match the frontend |
 | `JWT_SECRET` | — | Signs the backend's own session JWT |
 | `ENCRYPTION_KEY` | — | 64 hex chars. AES-256-GCM key for SMTP passwords at rest |
@@ -703,10 +704,17 @@ Everything in [Environment variables](#environment-variables), plus:
 
 | Variable | Value | Why |
 |---|---|---|
-| `DATABASE_SSL` | `true` | Managed Postgres terminates TLS with a cert the container has no CA for. **Without this the container crash-loops on boot** — the single commonest first-deploy failure. |
+| `DATABASE_SSL` | `true` | Managed Postgres terminates TLS with a cert the container has no CA for. **Without this the container crash-loops on boot** — the single commonest first-deploy failure. Set `false` if you use the platform's *internal* host, which is not TLS. |
 | `RUN_WORKER_IN_PROCESS` | `true` (Option B only) | Otherwise nothing sends |
-| `APP_URL` | Deployed frontend URL | CORS rejects the frontend without it |
-| `PORT` | Usually injected by the platform | Read automatically |
+| `SEED_ON_BOOT` | `true` | A deployed container never runs `npm run seed`, so without this there are zero senders and every campaign is rejected |
+| `APP_URL` | Deployed **frontend** URL | CORS rejects the frontend without it. Not this API's own URL |
+| `PORT` | **Leave unset** | The platform injects it. Hardcoding it causes "Application failed to respond", because the proxy routes to a port nothing is listening on |
+
+### Platform gotchas worth knowing
+
+- **Unresolved variable references become empty strings.** On Railway, `${{Redis.REDIS_URL}}` naming a service that does not exist resolves to `""` rather than failing — so the app sees a *set but empty* variable. The env validator reports that state explicitly.
+- **Private networking is IPv6-only.** `*.railway.internal` hosts need `family: 0` on the Redis client; this is applied automatically when an internal host is detected.
+- **Verify readiness, not just liveness.** `/health` reports `activeSenders` and returns `degraded` when it is zero — an instance can reach Postgres and Redis yet still reject every campaign.
 
 `ETHEREAL_ACCOUNTS` is worth setting explicitly in production — the auto-provisioned accounts
 are recreated on every fresh database, so pinning them keeps senders stable across redeploys.
