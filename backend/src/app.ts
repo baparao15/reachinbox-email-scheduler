@@ -10,6 +10,7 @@ import { authRouter } from './routes/auth';
 import { campaignsRouter } from './routes/campaigns';
 import { emailsRouter } from './routes/emails';
 import { healthRouter } from './routes/health';
+import { rootRouter } from './routes/root';
 import { sendersRouter } from './routes/senders';
 
 export function createApp() {
@@ -33,6 +34,7 @@ export function createApp() {
     }),
   );
 
+  app.use('/', rootRouter);
   app.use('/health', healthRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/campaigns', campaignsRouter);
