@@ -25,8 +25,9 @@ Next.js 15 · Tailwind CSS · Auth.js (Google OAuth) · TanStack Query
 11. [API reference](#api-reference)
 12. [Feature checklist](#feature-checklist)
 13. [Testing and verification](#testing-and-verification)
-14. [Demo runbook](#demo-runbook)
-15. [Assumptions, shortcuts and trade-offs](#assumptions-shortcuts-and-trade-offs)
+14. [Deploying](#deploying)
+15. [Demo runbook](#demo-runbook)
+16. [Assumptions, shortcuts and trade-offs](#assumptions-shortcuts-and-trade-offs)
 
 ---
 
@@ -117,8 +118,10 @@ npm run install:all && npm run infra:up && npm run setup
 | `PORT` | `4000` | API port |
 | `APP_URL` | `http://localhost:3000` | Frontend origin, used for CORS |
 | `DATABASE_URL` | — | PostgreSQL connection string |
+| `DATABASE_SSL` | `false` | Set `true` for managed Postgres. See [Deploying](#deploying) |
 | `REDIS_URL` | — | Redis connection string |
 | `QUEUE_NAME` | `email-send` | BullMQ queue name |
+| `RUN_WORKER_IN_PROCESS` | `false` | Co-host the worker in the API process (single-container deploys) |
 | `GOOGLE_CLIENT_ID` | — | Verifies Google ID tokens; must match the frontend |
 | `JWT_SECRET` | — | Signs the backend's own session JWT |
 | `ENCRYPTION_KEY` | — | 64 hex chars. AES-256-GCM key for SMTP passwords at rest |
@@ -671,6 +674,57 @@ Three defects that typechecking and unit tests could not have surfaced:
    sit in the dashboard forever claiming they were about to send. `createCampaign` now rolls
    the campaign back on enqueue error, and the dashboard queries exclude `building`
    campaigns so a hard crash mid-insert cannot surface ghost rows either.
+
+---
+
+## Deploying
+
+The project is built to run as **two processes** — API and worker. Most single-container
+platforms (Railway, Render, Fly) start only one, so the worker would never run and nothing
+would ever send. Two ways to handle that:
+
+**Option A — two services (preferred).** Deploy the same repo twice:
+
+| Service | Start command |
+|---|---|
+| API | `npm run start` |
+| Worker | `npm run start:worker` |
+
+Both point at the same Postgres and Redis. This matches the local topology and lets you
+restart either half independently.
+
+**Option B — one service.** Set `RUN_WORKER_IN_PROCESS=true` and the API co-hosts the worker.
+Simpler and cheaper, but API traffic and email sending then share an event loop, and you can
+no longer restart one without the other.
+
+### Required environment variables in production
+
+Everything in [Environment variables](#environment-variables), plus:
+
+| Variable | Value | Why |
+|---|---|---|
+| `DATABASE_SSL` | `true` | Managed Postgres terminates TLS with a cert the container has no CA for. **Without this the container crash-loops on boot** — the single commonest first-deploy failure. |
+| `RUN_WORKER_IN_PROCESS` | `true` (Option B only) | Otherwise nothing sends |
+| `APP_URL` | Deployed frontend URL | CORS rejects the frontend without it |
+| `PORT` | Usually injected by the platform | Read automatically |
+
+`ETHEREAL_ACCOUNTS` is worth setting explicitly in production — the auto-provisioned accounts
+are recreated on every fresh database, so pinning them keeps senders stable across redeploys.
+
+### If the container crash-loops
+
+The API prints the real cause to stderr between `=== API FAILED TO START ===` markers, and a
+preflight check names which backing service is unreachable before migrations run — so the logs
+say *"Cannot connect to Postgres at …"* rather than a generic startup failure.
+
+Most common causes, in order:
+
+1. `DATABASE_SSL` not set to `true` on managed Postgres.
+2. `DATABASE_URL` / `REDIS_URL` pointing at a service that isn't provisioned or linked.
+3. A missing required variable — `JWT_SECRET`, `ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`. These fail
+   validation before startup and print `Invalid environment configuration` naming each field.
+
+Health check path for the platform: `/health`.
 
 ---
 

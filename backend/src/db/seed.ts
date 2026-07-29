@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { env } from '../config/env';
 import { encryptSecret } from '../lib/crypto';
 import { logger } from '../lib/logger';
+import { notInArray } from 'drizzle-orm';
 import { closeDb, db } from './index';
-import { senders } from './schema';
+import { emailJobs, senders } from './schema';
 import { runMigrations } from './migrate';
 
 const accountSchema = z.array(
@@ -150,8 +151,27 @@ export async function seed(): Promise<void> {
   }
 
   if (force && existing.length > 0) {
-    await db.delete(senders);
-    logger.info({ removed: existing.length }, 'Cleared existing senders (--force)');
+    // A sent email keeps a foreign key to the sender that delivered it, so
+    // senders cannot simply be deleted — and shouldn't be, since that would
+    // erase the record of who sent what. Retire them instead: `is_active=false`
+    // removes them from round-robin while leaving history intact. Only senders
+    // nothing references are actually removed.
+    await db.update(senders).set({ isActive: false });
+
+    const referenced = await db
+      .selectDistinct({ senderId: emailJobs.senderId })
+      .from(emailJobs);
+    const referencedIds = referenced.map((r) => r.senderId);
+
+    const deleted =
+      referencedIds.length > 0
+        ? await db.delete(senders).where(notInArray(senders.id, referencedIds)).returning()
+        : await db.delete(senders).returning();
+
+    logger.info(
+      { retired: existing.length - deleted.length, deleted: deleted.length },
+      'Existing senders cleared (--force): referenced ones retired, unreferenced ones deleted',
+    );
   }
 
   const accounts = await resolveAccounts();
